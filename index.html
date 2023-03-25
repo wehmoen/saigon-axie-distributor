@@ -78,6 +78,11 @@
             flex-direction: column;
         }
 
+
+        #loading h3 {
+            text-align: center;
+        }
+
         #loading h3::after {
             content: '';
             opacity: 0;
@@ -112,7 +117,7 @@
         <div></div>
         <div></div>
     </div>
-    <h3>Please Wait</h3>
+    <h3 id="loading-text">Please Wait</h3>
 </div>
 
 
@@ -335,80 +340,155 @@
     }];
     const CONTRACT_ADDRESS = "0xA02B8d4b66a51D160e01Ab822C9b6Cf97558E5d8";
 
-    function loading(isLoading) {
+    function loading(isLoading, text = "Loading") {
         if (isLoading) {
             document.getElementById("loading").style.display = "flex";
+            document.getElementById("loading-text").innerText = text;
         } else {
             document.getElementById("loading").style.display = "none";
+            document.getElementById("loading-text").innerText = "";
         }
     }
 
     window.onload = async function () {
-        loading(false)
-        const eRonin = new ethers.providers.Web3Provider(window.ronin.provider);
-        const signer = eRonin.getSigner();
-        document.getElementById("address").innerText = await signer.getAddress();
-        const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
-        window.con = contract
-
-        document.getElementById("send").onclick = async function (e) {
-            e.preventDefault();
-            console.log("send button clicked")
-            const numAxies = document.getElementById("num-axies").value;
-            const offset = document.getElementById("offset").value;
-            const to = document.getElementById("ronin-address").value;
-
-            const batch = (await contract.getBatch(numAxies, offset)).map(x => parseInt(x._hex, 16))
-
-            const row = document.createElement("tr");
-            const data = [
-                "",
-                0,
-                to.slice(0, 6) + "..." + to.slice(-4),
-                batch.length + " (" + batch.join(",") + ")",
-            ]
-
-            try {
-                loading(true)
-                const result = await contract.batchTransfer(batch, to);
-
-                const link = document.createElement("a")
-                link.href = "https://saigon-explorer.roninchain.com/tx/" + result.hash
-                link.innerText = result.hash.slice(0, 6) + "..." + result.hash.slice(-4)
-                link.target = "_blank"
-
-                data[0] = link.outerHTML;
-                data[1] = result.blockNumber;
-
-                for (let i = 0; i < data.length; i++) {
-                    const td = document.createElement("td");
-                    td.innerHTML = data[i];
-                    row.appendChild(td);
-                }
-
-                document.getElementById("transactions").appendChild(row);
-
-                loading(false)
-
-            } catch (e) {
-                loading(false)
-                console.log(e)
-                alert(e.message)
+        if (window.ronin !== undefined) {
+            const eRonin = new ethers.providers.Web3Provider(window.ronin.provider);
+            let signer = eRonin.getSigner();
+            window.signer = signer;
+            const {chainId} = await eRonin.getNetwork()
+            if (chainId !== 2021) {
+                loading(true, "Please switch to Saigon Testnet and reload the site!")
+                return
             }
+            try {
+                window.address = await signer.getAddress();
+                let contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+                const AUTHORIZED_SENDER = await contract.AUTHORIZED_SENDER();
 
-        };
-    }
+                window.ronin.roninEvent.addEventListener('account_changed', () => {
+                    signer = eRonin.getSigner();
+                    signer.getAddress().then(newAddress => {
+                        window.address = newAddress;
+                        document.getElementById("address").innerText = newAddress;
+                        contract.hasRole(AUTHORIZED_SENDER, window.address).then(hasRole => {
+                            if (!hasRole) {
+                                loading(true, "You are not authorized to use this tool! Please get in touch with wehmoen if you believe this is a mistake. (Your address: " + address + " is not whitelisted to distribute Axies!)")
+                            } else {
+                                loading(false)
+                            }
 
-    function getAccounts() {
-        return new Promise((resolve, reject) => {
-            window.ronin.provider.sendAsync({id: 0, jsonrpc: '2.0', method: 'eth_accounts'}, (error, response) => {
-                if (error) {
-                    reject(error)
-                } else {
-                    resolve(response.result)
+                            console.log("██████████████████████████████████████████████████")
+                            console.log('\x1b[1mConfiguration:\x1b[0m');
+                            console.log('\x1b[1mContract address:\x1b[0m ' + CONTRACT_ADDRESS);
+                            console.log('\x1b[1mYour address:\x1b[0m ' + window.address);
+                            console.log('\x1b[1mChain ID:\x1b[0m ' + chainId);
+                            console.log('\x1b[1mAuthorized sender:\x1b[0m ' + AUTHORIZED_SENDER);
+                            console.log('\x1b[1mHas role:\x1b[0m ' + hasRole);
+                        })
+                    }).catch(e => {
+                        console.log(e)
+                    })
+                })
+
+                const hasRole = await contract.hasRole(AUTHORIZED_SENDER, address);
+
+                if (!hasRole) {
+                    loading(true, "You are not authorized to use this tool! Please get in touch with wehmoen if you believe this is a mistake. (Your address: " + address + " is not whitelisted to distribute Axies!)")
+                    return
                 }
-            })
-        })
+
+                loading(false)
+                document.getElementById("address").innerText = address;
+                document.getElementById("send").onclick = async function (e) {
+                    e.preventDefault();
+                    const numAxies = document.getElementById("num-axies").value;
+                    const offset = document.getElementById("offset").value;
+                    const to = document.getElementById("ronin-address").value;
+
+                    const batch = (await contract.getBatch(parseInt(numAxies) + 1, offset)).map(x => parseInt(x._hex, 16))
+
+                    const row = document.createElement("tr");
+                    const data = [
+                        "",
+                        0,
+                        to,
+                        batch.length + " (" + batch.slice(0, -1).join(",") + ")",
+                    ]
+
+                    try {
+                        loading(true, "Please wait while we send your Axies")
+                        const result = await contract.batchTransfer(batch, to);
+
+                        const link = document.createElement("a")
+                        link.href = "https://saigon-explorer.roninchain.com/tx/" + result.hash
+                        link.innerText = result.hash.slice(0, 6) + "..." + result.hash.slice(-6)
+                        link.target = "_blank"
+
+                        data[0] = link.outerHTML;
+                        data[1] = result.blockNumber;
+
+                        for (let i = 0; i < data.length; i++) {
+                            const td = document.createElement("td");
+                            if (typeof data[i] === "string" && data[i].startsWith("0x")) {
+                                const link = document.createElement("a")
+                                link.href = "https://saigon-explorer.roninchain.com/address/" + data[i]
+                                link.innerText = data[i].slice(0, 6) + "..." + data[i].slice(-6)
+                                link.target = "_blank"
+                                link.title = data[i]
+                                td.appendChild(link)
+                            } else {
+                                td.innerHTML = data[i];
+                            }
+                            row.appendChild(td);
+                        }
+
+                        document.getElementById("transactions").appendChild(row);
+
+                        loading(false)
+
+                    } catch (e) {
+                        loading(false)
+                        console.log(e)
+                        alert(e.message)
+                    }
+
+                };
+
+                console.log(`
+ __          __  _                          _
+ \\ \\        / / | |                        | |
+  \\ \\  /\\  / /__| | ___ ___  _ __ ___   ___| |
+   \\ \\/  \\/ / _ \\ |/ __/ _ \\| '_ \` _ \\ / _ \\ |
+    \\  /\\  /  __/ | (_| (_) | | | | | |  __/_|
+     \\/  \\/ \\___|_|\\___\\___/|_| |_| |_|\\___(_)`)
+
+                console.log(`
+ _____        _   _            __       _                       _        _           ___ _     _        _ _           _
+/__   \\___   | |_| |__   ___  / _\\ __ _(_) __ _  ___  _ __     /_\\ __  _(_) ___     /   (_)___| |_ _ __(_) |__  _   _| |_ ___  _ __
+  / /\\/ _ \\  | __| '_ \\ / _ \\ \\ \\ / _\` | |/ _\` |/ _ \\| '_ \\   //_\\\\\\ \\/ / |/ _ \\   / /\\ / / __| __| '__| | '_ \\| | | | __/ _ \\| '__|
+ / / | (_) | | |_| | | |  __/ _\\ \\ (_| | | (_| | (_) | | | | /  _  \\>  <| |  __/  / /_//| \\__ \\ |_| |  | | |_) | |_| | || (_) | |
+ \\/   \\___/   \\__|_| |_|\\___| \\__/\\__,_|_|\\__, |\\___/|_| |_| \\_/ \\_/_/\\_\\_|\\___| /___,' |_|___/\\__|_|  |_|_.__/ \\__,_|\\__\\___/|_|
+                                          |___/
+`)
+                console.log(`
+ _                          _
+| |__  _   _  __      _____| |__  _ __ ___   ___   ___ _ __
+| '_ \\| | | | \\ \\ /\\ / / _ \\ '_ \\| '_ \` _ \\ / _ \\ / _ \\ '_ \\
+| |_) | |_| |  \\ V  V /  __/ | | | | | | | | (_) |  __/ | | |
+|_.__/ \\__, |   \\_/\\_/ \\___|_| |_|_| |_| |_|\\___/ \\___|_| |_|
+       |___/
+`)
+
+                console.log('\x1b[1mConfiguration:\x1b[0m');
+                console.log('\x1b[1mContract address:\x1b[0m ' + CONTRACT_ADDRESS);
+                console.log('\x1b[1mYour address:\x1b[0m ' + address);
+                console.log('\x1b[1mChain ID:\x1b[0m ' + chainId);
+                console.log('\x1b[1mAuthorized sender:\x1b[0m ' + AUTHORIZED_SENDER);
+                console.log('\x1b[1mHas role:\x1b[0m ' + hasRole);
+            } catch (e) {
+                alert("Please unlock your Ronin wallet!")
+            }
+        }
 
     }
 </script>
